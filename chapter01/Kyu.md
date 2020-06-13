@@ -39,3 +39,68 @@ ex) 서브클래스는 슈퍼클래스의 기능을 직접 사용할 수 있음,
 
 1-3 DAO의 확장
 ---------------------------------------------------------------------------
+추상 클래스를 만들고 이를 상속한 서브클래스에서 변화가 필요한 부분을 바꿔서 쓸 수 있게 만든 이유는 바로 이렇게 변화의 성격이 다른 것을 분리해서, 서로 영향을 주지 않은 채로 각각 필요한 시점에 독립적으로 변경할 수 있게 하기 위해서다. **그러나 단점이 많은 상속이라는 방법을 사용했다**
+=> DB connection 과 관련된 부분을 서브클래스가 아니라 아예 별도의 클래스에 담고, 이렇게 만든 클래스를 UserDao가 사용하게 한다.
+
+코드로 보면 아래와 같은 형태이다.
+
+public class UserDao {
+	private SimpleConnectionMaker simpleConnectionMaker;
+	public UserDao() {
+	this.simpleConnectionMaker = new SimpleConnectionMaker ();
+}
+
+public void add(User user) throws ClassNotFoundException, SQLExcepion {
+	Connection c = simpleConnectionMaker.makeNewConnection();
+	...
+}
+
+public void get(String id) throws ClassNotFoundException, SQLExcepion {
+	Connection c = simpleConnectionMaker.makeNewConnection();
+}
+
+}
+
+public class SimpleConnectionMaker {
+public Connection makeNewConnection() throwsClassNotFoundException, SQLExcepion {
+...
+}
+}
+
+문제점?
+1. UserDao가 simpleConnectionMaker의 makeNewConnection이라는 메소드에 디팬던시가 걸려있다.
+2. DB커넥션을 제공하는 클래스가 구체적으로 어떤 클레스인지 UserDao가 알고 있는 구조이다.
+
+=> 인터페이스를 적용하여 구현 클래스에 대한 구체적인 정보를 감추자!
+=> 오브젝트 생성과정에서 구현 클래스를 선택해야겠지만, 이외의 부분은 인터페이스로 추상화 해놓은 최소한의 통로를 통해 접근하는 쪽에서는 어떤 클래스를 사용할지 몰라도 된다.
+
+문제점
+1. UserDao의 다른 모든 곳에서는 인터페이스를 통해 사용하게 만들어서 DB connection을 제공하는 클래스에 대한 구체적인 정보를 제거 가능하지만, 초기에 오브젝트를 생성하는 과정에서 생성자 코드는 제거되지 않고 남아있다.
+
+=> UserDao 오브젝트가 다른 오젝트와 관계를 맺으려면 관계를 맺을 오브젝트가 있어야 하는데, 이 오브젝트를 UserDao 코드내에서 만들지 말고 메소드 파라미터를 이용해서 외부에서 잔달받자! 즉, **클래스 사이에서 관계를 만들지 말고 오브젝트 사이에서 관계를 만들자**  런타임에 오브젝트 관계를 갖는 구조로 만들어주는것이 클라이언트 코드(여기서는 UserDaoTest)의 책임이다.
+(클래스 사이의 관계는 코드에 다른 클래스 이름이 나타나면서 만들어지지만, 오브젝트 사이의 관계는 그렇지 않다.)
+
+객체지향 원칙
+* Open-Closed Principle: 클래스나 모듈은 확장에는 열려 있어야 하고 변경에는 닫혀 있어야 한다.
+* High coherence: 응집도가 높다는 것은 변화가 일어날 때 해당 모듈에서 변화는 부분이 크다는 것을 의미한다.
+* Low coupling: 하나의 오브젝트가 변경이 일어날 때 관계를 맺고 있는 다른 오브젝트에게 변화를 유지하는 정도를 의미한다. (책임과 관심사가 다른 오브젝트 또는 모듈과는 낮은 결합도, 즉 느슨하게 연결된 형태를 유지하는 것이 바람직하다. 느슨한 연결은 관계를 유지하는 데 꼭 필요한 최소한의 방법만 간접적인 형태로 제공하고, 나머지는 독립적이고 알 필요도 없게 만들어 준다.)
+* 이외에도 SOLID라 불리는 Single-Responsibility Principle, Open-Closed Principle,Liskov-Substitution Principle, Interface-Segregation Principle, Dependency Inversion Principle 등이 있다.
+
+패턴
+* strategy pattern: 자식의 context에서 필요에 따라 변경이 필요한 알고리즘을 인터페이스 등을 통해 통째로 외부로 분리시키고, 이를 구현한 구체적인 알고리즘 클래스를 필요에 따라 바꿔서 사용하는 디자인 패턴
+ex) UserDao를 사용하는 UserDaoTest는 UserDao가 사용할 전략인 ConnectionMaker를 UserDao의 생성자 또는 setter를 통해 제공해준다.
+* factory method pattern: 서브클래스에서 구체적인 오브젝트 생성 방법을 결정하게 하는 디자인 패턴
+* template method pattern: 슈퍼클래스에 기본적인 로직의 흐름을 만들고, 그 기능의 일부를 추상메소드나 오버라이딩 가능한 메소드 등으로 만든 뒤 서브클래스에서 이런 메소드를 필요에 맞게 구현해서 사용하도록 하는 패턴
+
+=> **스프링이란 이런 객체지향 설계원칙과 디자인 패턴에 나타난 장점을 개발자들이 자연스럽게 활용할 수 있도록 도와주는 프레임워크**
+
+1-4 제어의 역전(IoC)
+---------------------------------------------------------------------------
+
+factory: 객체의 생성 방법을 결정하고 만들어진 오브젝트를 반환해주는 오브젝트 (디자인 패턴 중 하나인 factory method pattern과 다른 용어, 단순히 오브젝트를 생성하는 쪽과 생성된 오브젝트를 사용하는 쪽으로 역할과 책임을 분리하는 목적으로 사용하는 것이  factory이다.)
+
+그림 1-8을 보면 factory를 사용함으로서 어플리케이션 컴포넌트 역할을 하는 오브젝트와 어플리케이션 구조를 결정하는 오브젝트를 분리하였다는 것을 확인할 수 있다.
+
+일반적인 프로그램 흐름은 모든 오브젝트가 능동적으로 자신이 사용할 클래스를 결정하고, 언제 어떻게 오브젝트를 만들지 결정한다. 즉 모든 종류의 작업을 사용하는 쪽에서 제어한다. **제어의 역전이란 이런 제어의 흐름을 뒤집어 오브젝트가 자신이 사용할 오브젝트를 스스로 선택하지 않고 생성하지도 않는다. 오브젝트 자신 역시 어디서 생성되고 사용되는지 알 수 없다. 모든 제어 권한을 자신이 아닌 다른 대상에게 위임한다.** 
+
+라이브러리는 사용하는 쪽에서 어플리케이션 흐름을 직접 제어하지만, 프레임워크는 어플리케이션 코드가 프레임워크에 의해 사용된다.
