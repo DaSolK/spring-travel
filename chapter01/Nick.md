@@ -38,7 +38,7 @@
 사용자 정보 저장/조회 DAO 만들기
 ### User
 - 사용자 정보는 자바빈 규약을 따르는 오브젝트를 이용하면 편리
-```
+```java
 public class User {
 	String id;
 	String name;
@@ -73,7 +73,7 @@ public class User {
   - 디폴트 생성자 : 자바빈은 파라미터가 없는 디폴트 생성자를 갖고 있어야 한다.
   - 프로퍼티 : 자바빈이 노출하는 이름을 가진 속성을 프로퍼티라고 한다. 프로퍼티는 set으로 시작하는 수정자메소드(setter)와 get으로 시작하는 접근자 메소드(getter)를 이용해 수정/조회 할 수 있다.
 ### UserDao
-```
+```java
 package springbook.user.dao;
 
 import springbook.user.domain.User;
@@ -128,7 +128,7 @@ public class UserDao {
 - 가장 간단한 검증 방법은 오브젝트 스스로 자신을 검증하는 것
 - 모든 클래스에는 자신을 엔트리 포인트로 설정해 직접 실행이 가능하게 해주는 main 메소드가 있다.
 
-```
+```java
 public static void main(String[] args) throws ClassNotFoundException, SQLException {
 	UserDao dao = new UserDao();
 
@@ -169,7 +169,7 @@ public static void main(String[] args) throws ClassNotFoundException, SQLExcepti
 - 작업이 끝나면, 사용한 리소스를 닫고, 시스템에 돌려주는 것
 #### 중복 코드의 메소드 추출
 - 커넥션을 가져오는 중복 코드 분리
-```
+```java
 public class UserDao {
 	public void add(User user) throws ClassNotFoundException, SQLException {
 		Connection c =getConnection();
@@ -221,14 +221,14 @@ public class UserDao {
  - 즉, UserDao 소스코드를 제공하지 않아도, getConnection() 메소드를 원하는 방식으로 확장해 UserDao 기능을 사용할 수 있다.
  - **DB 커넥션의 관심을 상속을 통해 서브클래스로 분리한 것**
 
-```
+```java
 public abstract class UserDao {
 	...
 	public abstract Connection getConnection() throws ClassNotFoundException, SQLException;
 }
 ```
 
-```
+```java
 public class NUserDao extends UserDao {
 	public Connection getConnection() throws ClassNotFoundException, SQLException {
 		// N 사 DB connection 생성코드
@@ -272,7 +272,7 @@ public class DUserDao extends UserDao {
   - DB 커넥션과 관련된 부분을 별도 클래스로 제작
   - 해당 클래스를 UserDao가 이용
 
-```
+```java
 public class UserDao {
 	private SimpleConnectionMaker simpleConnectionMaker;
 
@@ -318,7 +318,7 @@ public class UserDao {
 }
 ```
 
-```
+```java
 public class SimpleConnectionMaker {
 	public Connection makeNewConnection() throws ClassNotFoundException, SQLException {
 		Class.forName("com.mysql.cj.jdbc.Driver");
@@ -348,7 +348,7 @@ public class SimpleConnectionMaker {
 - 인터페이스를 통해 접근하면 **실제 구현 클래스를 바꿔도 신경 쓸 일이 없다.**
 - **인터페이스**는 ***어떤 일을 하겠다는 기능만 정의한 것***
 
-```
+```java
 public interface ConnectionMaker {
 	public Connection makeConnection() throws ClassNotFoundException, SQLException;
 }
@@ -360,7 +360,7 @@ public class DConnectionMaker implements ConnectionMaker {
 	}
 }
 ```
-```
+```java
 public class UserDao {
 	private ConnectionMaker connectionMaker;
 
@@ -416,14 +416,14 @@ public class UserDao {
   - 오브젝트 사이의 관계가 만들어지려면, 일단 만들어진 오브젝트가 있어야 하는데, 직접 생성자를 호출해 오브젝트를 만들 수도 있지만 **외부에서 만들어 준 것**을 가져올 수도 있다.
 - 해당 인터페이스 타입의 오브젝트라면 파라미터 전달이 가능하고, 어떤 클래스로부터 만들어졌는지 몰라도, 정의된 메소드를 이용하면 신경을 쓰지 않는다.
 
-```
+```java
 public UserDao(ConnectionMaker connectionMaker) {
 	this.connectionMaker = connectionMaker;
 }
 ```
 - main은 **UserDao의 클라이언트** 로써, DConnectionMaker를 사용해 진행한다.
 
-```
+```java
 public static void main(String[] args) throws ClassNotFoundException, SQLException {
 	ConnectionMaker connectionMaker = new DConnectionMaker();
 	UserDao dao = new UserDao(connectionMaker);
@@ -485,7 +485,7 @@ public static void main(String[] args) throws ClassNotFoundException, SQLExcepti
   - 추상 팩토리 패턴 / 팩토리 메소드 패턴과 다르다
 - 오브젝트를 생성하는 쪽과 생성된 오브젝트를 사용하는 쪽의 역할과 책임을 깔끔하게 분리하려는 목적
 
-```
+```java
 public class DaoFactory {
 	public UserDao userDao() {
 		ConnectionMaker connectionMaker = new DConnectionMaker();
@@ -495,7 +495,7 @@ public class DaoFactory {
 }
 ```
 
-```
+```java
 public static void main(String[] args) throws ClassNotFoundException, SQLException {
 		ConnectionMaker connectionMaker = new DConnectionMaker();
 		UserDao dao = new DaoFactory().userDao();
@@ -512,7 +512,7 @@ public static void main(String[] args) throws ClassNotFoundException, SQLExcepti
 - AccountDao, MessageDao가 생겼을 때, ConnectionMaker 구현 클래스의 오브젝트를 생성하는 코드가 메소드마다 반복되게 된다. (중복)
 - 분리가 필요
 
-```
+```java
 public UserDao userDao() {
 	return new UserDao(new DConnectionMaker());
 }
@@ -526,7 +526,7 @@ public MessageDao messageDao() {
 }
 ```
 
-```
+```java
 public class DaoFactory {
 	public UserDao userDao() {
 		return new UserDao(connectionMaker());
@@ -565,7 +565,7 @@ public class DaoFactory {
 	- ***@Configuration*** : 빈 팩토리를 위한 오브젝트 설정을 담당하는 클래스라고 인식
 	- ***@Bean*** : 오브젝트를 만들어주는 메소드
   
-```
+```java
 @Configuration
 public class DaoFactory {
 	@Bean
@@ -580,7 +580,7 @@ public class DaoFactory {
 }
 ```
 
-```
+```java
 public static void main(String[] args) throws ClassNotFoundException, SQLException {
 
 	ApplicationContext context = new AnnotationConfigApplicationContext(DaoFactory.class);
@@ -643,7 +643,7 @@ public static void main(String[] args) throws ClassNotFoundException, SQLExcepti
 - DaoFactory의 userDao()를 여러번 호출했을 때 오브젝트는 동일한가?
 - 애플리케이션 컨텍스트에는 어떠한가?
 
-```
+```java
 DaoFactory factory = new DaoFactory();
 UserDao dao1 = factory.userDao();
 UserDao dao2 = factory.userDao();
@@ -654,7 +654,7 @@ System.out.println(dao2);
 `com.example.demo.user.dao.UserDao@30ee2816`
 `com.example.demo.user.dao.UserDao@31d7b7bf`
 
-```
+```java
 ApplicationContext context = new AnnotationConfigApplicationContext(DaoFactory.class);
 UserDao dao1 = context.getBean("userDao", UserDao.class);
 UserDao dao2 = context.getBean("userDao", UserDao.class);
@@ -682,7 +682,7 @@ System.out.println(dao2);
 - Static factory method인 getInstance를 만들고, 이 메소드가 최초로 호출되는 시점에만 생성자를 호출해서 오브젝트를 생성시킨다. 생성된 오브젝트는 private static 필드에 저장된다. (또는 private ststic 필드의 초기값으로 오브젝트를 미리 만들어 둘 수 있다.)
 - 오브젝트가 생성된 이후에는 getInstance 메소드를 통해 이미 만들어져 있는 private static 필드에 저장해둔 오브젝트를 넘겨준다.
 
-```
+```java
 public class UserDao {
 	private static UserDao INSTANCE;
 	...
@@ -774,7 +774,7 @@ public class UserDao {
   - 자신이 필요한 의존 오브젝트를 능동적으로 찾는다.
   - 어떤 클래스의 오브젝트를 이용할지를 결정하지는 않는다.
   - 런타임 시 의존관계를 맺을 오브젝트를 결정하는 것과 오브젝트의 생성 작업은 외부 컨테이너에게 IoC로 맡기지만, 이를 가져올 떄는 메소드나 생성자를 통한 주입 대신 ***스스로 컨테이너에게 요청하는 방법*** 을 사용한다.
-```
+```java
 public UserDao(){
 	DaoFactory daoFactory = new DaoFactory();
 	this.connectionMaker = daoFactory.connectionMaker();
@@ -784,7 +784,7 @@ public UserDao(){
   - 의존대상은 ConnectionMaker 인터페이스 뿐이다.
 - 그러나 적용 방법은 외부로부터의 주입이 아니라, 스스로 IoC 컨테이너인 DaoFactory에게 요청하는 것이다.
 - 애플리케이션 컨텍스트에서는 ***getBean()***이라는 메소드가 의존관계 검색에 사용된다.
-```
+```java
 public UserDao(){
 	ApplicationContext context = new AnnotationConfigApplicationContext(DaoFactory.class);
 	this.connectionMaker = context.getBean("connectionMaker", ConnectionMaker.class);
@@ -805,7 +805,7 @@ public UserDao(){
 #### 기능 구현의 교환
 - 바라보는 DB 서버의 변경등의 상황에서 ConnectionMaker 생성 코드를 변경하는 것만으로도 전체 변경이 가능하다.
   - new ConnectionMaker()를 사용하는 모든 곳에 변경 적용하는 짓을 하지 않아도 된다.
-```
+```java
 @Bean
 public ConnectionMaker connectionMaker() {
 	return new LocalDBConnectionMaker();
@@ -820,7 +820,7 @@ public ConnectionMaker connectionMaker() {
 - DB Connection Pool Open/Close 문제
   - 매번 Count 소스를 추가하고 삭제할 수 없다.
   - DI를 통해 Count 하는 오브젝트를 추가한다.
-```
+```java
 public class CountingConnectionMaker implements ConnectionMaker {
 	int counter = 0;
 	private ConnectioNmaker realConnectioNmaker;
@@ -839,7 +839,7 @@ public class CountingConnectionMaker implements ConnectionMaker {
 	}
 }
 ```
-```
+```java
 @Configuration
 public class CountingDaoFactory {
 	@Bean
@@ -866,7 +866,7 @@ public class CountingDaoFactory {
   - **일반 메소드를 이용한 주입**
     - 한번에 여러 개의 파라미터를 받을 수 있지만, 그만큼 실수하기 쉽다.
 
-```
+```java
 public void setConnectionMaker(ConnectionMaker connectionMaker) {
 	this.connectionMaker = connectionMaker;
 }
@@ -909,14 +909,14 @@ public void setConnectionMaker(ConnectionMaker connectionMaker) {
 | userDao.setConnectionMaker(connectionMaker()) | \<property name="connectionMaker" ref="connectionMaker"\> |
 |---|---|
 
-```
+```xml
 <bean id="userDao" class="springbook.dao.UserDao">
 	<property name="connectionMaker" ref="connectionMaker">
 </bean>
 ```
 #### XML의 의존관계 주입 정보
 - **\<beans\>** 로 두개의 bean을 감싸주면 DaoFactory로부터 XML로의 전환이 끝이 난다.
-```
+```xml
 <beans>
 	<bean id="connectionMaker" class="springbook.dao.DConnectionMaker"/>
 	<bean id="userDao" class="springbook.dao.UserDao">
@@ -928,7 +928,7 @@ public void setConnectionMaker(ConnectionMaker connectionMaker) {
 - **ref** 는 주입할 오브젝트를 정의한 빈의 ID
 - 같은 인터페이스를 구현한 의존 오브젝트를 여러 개 정의해두고, 원하는 걸 골라서 DI하는 경우도 있다.
   - 각 빈의 이름을 독립적으로 만들고, ref로 DI 받을 빈을 지정
-```
+```xml
 <beans>
 	<bean id="localDBConnectionMaker" class="springbook.dao.LocalDBConnectionMaker"/>
 	<bean id="testDBConnectionMaker" class="springbook.dao.TestDBConnectionMaker"/>
@@ -941,7 +941,7 @@ public void setConnectionMaker(ConnectionMaker connectionMaker) {
 ### XML을 이용하는 애플리케이션 컨텍스트
 - 애플리케이션 컨텍스트가 DaoFactory 대신 XML 설정정보를 활용하도록 교체하기
 - IoC/DI는 **GenericXmlApplicationContext** 사용
-```
+```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <beans xmlns="http://www.springframework.org/schema/beans"
        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -953,14 +953,14 @@ public void setConnectionMaker(ConnectionMaker connectionMaker) {
 </beans>
 ```
 - AnnotationConfigApplicationContext 대신 **GenericXmlApplicationContext** 사용
-```
+```java
 ApplicationContext context = new GenericXmlApplicationContext("applicationContext.xml");
 ```
 ### DataSource 인터페이스로 전환
 #### DataSource 인터페이스 적용
 - ConnectionMaker는 DB 커넥션을 생성해주는 기능 하나만을 담당
 - **DataSource** 라는 인터페이스로 대체가능
-```
+```java
 public class UserDao {
 	private DataSource dataSource;
 
@@ -1006,7 +1006,7 @@ public class UserDao {
 }
 ```
 
-```
+```java
 @Configuration
 public class DaoFactory {
 	@Bean
@@ -1030,7 +1030,7 @@ public class DaoFactory {
 ```
 
 #### XML 설정 방식
-```
+```xml
  <bean id="dataSource" class="org.springframework.jdbc.datasource.SimpleDriverDataSource"/>
 ```
 - 아직, DB 접속정보를 넣어주지 못했다는 문제점이 있다.
@@ -1041,7 +1041,7 @@ public class DaoFactory {
 - 즉, 다른 빈 오브젝트의 레퍼런스가 아닌 단순 정보도 오브젝트를 초기화하는 과정에서 setter에 넣을 수 있다.
 - 그러나 다른 빈 오브젝트의 레퍼런스(ref)가 아니라 값이므로, **value** 를 사용한다.
 
-```
+```xml
 <property name="driverClass" value="com.mysql.cj.jdbc.Driver"/>
 <property name="url" value="`jdbc:mysql://localhost/springbook"/>
 <property name="username" value="spring"/>
@@ -1051,7 +1051,7 @@ public class DaoFactory {
 - driverClass는 스트링 타입이 아니라, **java.lang.Class** 타입이다.
 - 이런 형태가 가능한 이유는 스프링이 프로퍼티의 값을, setter의 파라미터 타입을 참고로 해서 적절한 형태로 변경하기 때문
 
-```
+```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <beans xmlns="http://www.springframework.org/schema/beans"
 	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
