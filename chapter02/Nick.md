@@ -289,8 +289,8 @@ public User() {}
 - 한번에 여러개 생성가능한 생성자 먼저 구현
 
 ```java
-	@Test
-	public void count() throws SQLException, ClassNotFoundException {
+@Test
+public void count() throws SQLException, ClassNotFoundException {
   ApplicationContext context = new ClassPathXmlApplicationContext("applicationContext.xml");
 
   UserDao dao = context.getBean("userDao", UserDao.class);
@@ -316,7 +316,7 @@ public User() {}
 
 ```java
 @Test
-	public void addAndGet() throws SQLException, ClassNotFoundException {
+public void addAndGet() throws SQLException, ClassNotFoundException {
   ApplicationContext context = new ClassPathXmlApplicationContext("applicationContext.xml");
 
   UserDao dao = context.getBean("userDao", UserDao.class);
