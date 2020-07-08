@@ -147,7 +147,7 @@ public class UserDaoTest {
 
 	@Test
 	public void addAndGet() throws SQLException {
-		ApplicationContext context = new ClassPathXmlApplicationContext("applicationContext.xml");
+		ApplicationContext context = new GenericXmlApplicationContext("applicationContext.xml");
 
 		UserDao dao = context.getBean("userDao", UserDao.class);
 		...
@@ -169,7 +169,7 @@ public class UserDaoTest {
 
 	@Test
 	public void addAndGet() throws SQLException, ClassNotFoundException {
-		ApplicationContext context = new ClassPathXmlApplicationContext("applicationContext.xml");
+		ApplicationContext context = new GenericXmlApplicationContext("applicationContext.xml");
 
 		UserDao dao = context.getBean("userDao", UserDao.class);
 		User user = new User();
@@ -244,7 +244,7 @@ public class UserDaoTest {
 
 	@Test
 	public void addAndGet() throws SQLException, ClassNotFoundException {
-		ApplicationContext context = new ClassPathXmlApplicationContext("applicationContext.xml");
+		ApplicationContext context = new GenericXmlApplicationContext("applicationContext.xml");
 
 		UserDao dao = context.getBean("userDao", UserDao.class);
 
@@ -291,7 +291,7 @@ public User() {}
 ```java
 @Test
 public void count() throws SQLException, ClassNotFoundException {
-  ApplicationContext context = new ClassPathXmlApplicationContext("applicationContext.xml");
+  ApplicationContext context = new GenericXmlApplicationContext("applicationContext.xml");
 
   UserDao dao = context.getBean("userDao", UserDao.class);
   User user1 = new User("gyumee", "박성철", "springno1");
@@ -317,7 +317,7 @@ public void count() throws SQLException, ClassNotFoundException {
 ```java
 @Test
 public void addAndGet() throws SQLException, ClassNotFoundException {
-  ApplicationContext context = new ClassPathXmlApplicationContext("applicationContext.xml");
+  ApplicationContext context = new GenericXmlApplicationContext("applicationContext.xml");
 
   UserDao dao = context.getBean("userDao", UserDao.class);
   User user1 = new User("gyumee", "박성철", "springno1");
@@ -341,3 +341,458 @@ public void addAndGet() throws SQLException, ClassNotFoundException {
 ```
 
 #### get() 예외조건에 대한 테스트
+- get 메소드에 전달된 id가 없다면 어떻게 할까
+  - 하나는 null과 같은 특별한 값을 리턴하는 경우
+  - id에 해당하는 정보를 찾을 수 없다고 예외를 던지는 것
+- 어떻게 테스트 코드를 만들면 좋은가
+  - 예외가 던져지면 테스트 메소드의 실행은 중단되고 테스트는 실패가 되나, 이번에는 반대로 예외가 던져저야 성공한 케이스
+    - assertThat() 메소드로는 확인이 어렵다
+
+```java
+@Test(expected=EmptyResultDataAccessException.class)
+public void getUserFailure() throws SQLException, ClassNotFoundException {
+  ApplicationContext context = new GenericXmlApplicationContext("applicationContext.xml");
+
+  UserDao dao = context.getBean("userDao", UserDao.class);
+  dao.deleteAll();
+  assertEquals(dao.getCount(), 0);
+
+  dao.get("unknown_id");
+}
+```
+
+***junit5 소스 수정***
+```java
+@Test
+public void getUserFailure() throws SQLException, ClassNotFoundException {
+  ApplicationContext context = new GenericXmlApplicationContext("applicationContext.xml");
+
+  UserDao dao = context.getBean("userDao", UserDao.class);
+  dao.deleteAll();
+  assertEquals(dao.getCount(), 0);
+  assertThrows(EmptyResultDataAccessException.class, () -> {
+    dao.get("unknown_id");
+  });
+}
+```
+- 위 예시에서는 SQLException이 발생하여, 테스트가 실패하지만, 예외케이스에 대한 처리 방법을 알 수 있다.
+
+#### 테스트를 성공시키기 위한 코드의 수정
+- get 메소드의 수정
+- 테스트의 성공을 볼 수 있다.
+
+```java
+public User get(String id) throws ClassNotFoundException, SQLException {
+  Connection c = dataSource.getConnection();
+
+  PreparedStatement ps = c.prepareStatement(
+      "select * from users where id = ?");
+  ps.setString(1, id);
+
+  ResultSet rs = ps.executeQuery();
+
+  User user = null;
+  if(rs.next()) {
+    user = new User();
+    user.setId(rs.getString("id"));
+    user.setName(rs.getString("name"));
+    user.setPassword(rs.getString("password"));
+  }
+
+  rs.close();
+  ps.close();
+  c.close();
+
+  if (user == null) throw new EmptyResultDataAccessException(1);
+
+  return user;
+}
+```
+
+#### 포괄적인 테스트
+- 성공하는 케이스만 만드는 경우가 있으나, 네거티브 테스트를 하는 것이 중요하다.
+- 따라서, 부정적인 케이스를 먼저 만드는 습관이 좋다.
+
+### 테스트가 이끄는 개발
+- get 메소드의 예외 테스트 생성 과정
+  - 새로운 기능을 넣기 위해, UserDao 코드를 수정
+  - 테스트를 먼저 만들어 테스트가 실패하는 것을 보고 나서 UserDao의 코드를 수정
+
+#### 기능설계를 위한 테스트
+- 존재하지 않는 id로 get 메소드를 실행하면 특정한 예외가 던져져야 한다는 식으로 만들어야 할 기능을 결정
+- UserDao 코드를 수정하는 대신 getuserFailure() 테스트를 먼저 만듦
+  - 만들 수 있었던 이유는 **추가하고 싶은 기능을 코드로 표현하려 했기 때문**
+
+#### 테스트 주도 개발
+- ***만들고자 하는 기능의 내용을 담고 있으면서 만들어진 코드를 검증해줄 수 있도록 테스트 코드를 먼저 만들고, 테스트를 성공하게 해주는 코드를 작성하는 방식의 개발 방법*** 을 **테스트 주도 개발(TDD, Test Driven Development)** 라고 한다.
+- **실패한 테스트를 성공시키기 위한 목적이 아닌 코드는 만들지 않는다** 는 기본 원칙을 가진다.
+  - 테스트를 먼저 만들고 진행하면, 해당 테스트가 성공하도록 하는 코드만 만드는 식이므로, 테스트를 빼먹지 않고 꼼꼼하게 진행할 수 있다.
+  - 이미 테스트를 만들어 놓아서, 코드에 대한 피드백이 수월하다.
+  - 코드에 확신이 생긴다.
+- **테스트를 작성하고 이를 성공시키는 코드를 만드는 작업 주기를 가능한 한 짧게 가져가도록 권장**
+
+### 테스트 코드 개선
+- 기계적으로 반복되는 부분이 있음
+
+```java
+ApplicationContext context = new GenericXmlApplicationContext("applicationContext.xml");
+
+UserDao dao = context.getBean("userDao", UserDao.class);
+```
+- JUnit을 통해, **테스트를 실행할 때마다 반복되는 준비 작업을 별도의 메소드에 넣게 해주고, 이를 매번 실행히켜주는 기능을 적용**
+
+#### @Before
+- 중복됐던 코드를 넣을 setUp()이라는 이름의 메소드를 만들고 테스트 메소드에서 제거한 코드를 넣는다.
+- dao 변수가 setUp() 메소드의 로컬 변수이니, 인스턴스 변수로 변경한다.
+- **@Before** 에너테이션을 적용한다.
+
+```java
+@Before
+public void setUp(){
+  ApplicationContext context = new GenericXmlApplicationContext("applicationContext.xml");
+  this.dao = context.getBean("userDao", UserDao.class);
+}
+```
+***JUnit5 소스 변경***
+```java
+@BeforeEach
+public void setUp(){
+  ApplicationContext context = new GenericXmlApplicationContext("applicationContext.xml");
+  this.dao = context.getBean("userDao", UserDao.class);
+}
+```
+```java
+
+@SpringBootTest(classes=com.example.demo.user.dao.UserDao.class)
+public class UserDaoTest {
+	private UserDao dao;
+
+	@BeforeEach
+	public void setUp(){
+		ApplicationContext context = new GenericXmlApplicationContext("applicationContext.xml");
+		this.dao = context.getBean("userDao", UserDao.class);
+	}
+
+	@Test
+	public void addAndGet() throws SQLException, ClassNotFoundException {
+		User user1 = new User("gyumee", "박성철", "springno1");
+		User user2 = new User("leegw700", "이길원", "springno2");
+
+		dao.deleteAll();
+		assertEquals(dao.getCount(), 0);
+
+		dao.add(user1);
+		dao.add(user2);
+		assertEquals(dao.getCount(), 2);
+
+		User userget1 = dao.get(user1.getId());
+		assertEquals(userget1.getName(), user1.getName());
+		assertEquals(userget1.getPassword(), user1.getPassword());
+
+		User userget2 = dao.get(user2.getId());
+		assertEquals(userget2.getName(), user2.getName());
+		assertEquals(userget2.getPassword(), user2.getPassword());
+	}
+
+	@Test
+	public void count() throws SQLException, ClassNotFoundException {
+		User user1 = new User("gyumee", "박성철", "springno1");
+		User user2 = new User("leegw700", "이길원", "springno2");
+		User user3 = new User("bumjin", "박범진", "springno3");
+
+		dao.deleteAll();
+		assertEquals(dao.getCount(), 0);
+
+		dao.add(user1);
+		assertEquals(dao.getCount(), 1);
+
+		dao.add(user2);
+		assertEquals(dao.getCount(), 2);
+
+		dao.add(user3);
+		assertEquals(dao.getCount(), 3);
+	}
+
+	@Test
+	public void getUserFailure() throws SQLException, ClassNotFoundException {
+		dao.deleteAll();
+		assertEquals(dao.getCount(), 0);
+		assertThrows(EmptyResultDataAccessException.class, () -> {
+			dao.get("unknown_id");
+		});
+	}
+}
+```
+
+- **JUnit이 하나의 테스트 클래스를 가져와 테스트를 수행하는 방식**
+  - 테스트 클래스에서 @Test가 붙은 pubilc이고 void형이며 파라미터가 없는 테스트 메소드를 모두 찾는다
+  - 테스트 클래스의 오브젝트를 하나 만든다
+  - @Before가 붙은 메소드가 있으면 실행한다
+  - @Test가 붙은 메소드를 하나 호출하고 테스트 결과를 저장해둔다
+  - @After가 붙은 메소드가 있으면 실행한다.
+  - 나머지 테스트 메소드에 대해 2~5번을 반복한다
+  - 모든 테스트의 결과를 종합해서 돌려준다
+
+#### 픽스처
+- ***테스트를 수행하는 데 필요한 정보나 오브젝트*** 를 **픽스처(fixture)** 라고 한다.
+  - UserDaoTest에서 dao가 대표적인 픽스처로, 여러 테스트에서 반복적으로 사용하여 @Before 메소드를 통해 생성해두면 좋다
+  - User 오브젝트들은 UserDao의 기능이 계속 만들어지고 그에 따라 테스트 메소드로 계속 추가될 텐데, UserDao에 대한 테스트라면 대부분 User 오브젝트를 사용할 것이기 때문에 픽스처로 설정하는 것이 좋다.
+
+```java
+@SpringBootTest(classes=com.example.demo.user.dao.UserDao.class)
+public class UserDaoTest {
+	private UserDao dao;
+	private User user1;
+	private User user2;
+	private User user3;
+
+	@BeforeEach
+	public void setUp(){
+		ApplicationContext context = new GenericXmlApplicationContext("applicationContext.xml");
+		this.dao = context.getBean("userDao", UserDao.class);
+	}
+
+	@Test
+	public void addAndGet() throws SQLException, ClassNotFoundException {
+		this.user1 = new User("gyumee", "박성철", "springno1");
+		this.user2 = new User("leegw700", "이길원", "springno2");
+
+		dao.deleteAll();
+		assertEquals(dao.getCount(), 0);
+
+		dao.add(user1);
+		dao.add(user2);
+		assertEquals(dao.getCount(), 2);
+
+		User userget1 = dao.get(user1.getId());
+		assertEquals(userget1.getName(), user1.getName());
+		assertEquals(userget1.getPassword(), user1.getPassword());
+
+		User userget2 = dao.get(user2.getId());
+		assertEquals(userget2.getName(), user2.getName());
+		assertEquals(userget2.getPassword(), user2.getPassword());
+	}
+
+	@Test
+	public void count() throws SQLException, ClassNotFoundException {
+		this.user1 = new User("gyumee", "박성철", "springno1");
+		this.user2 = new User("leegw700", "이길원", "springno2");
+		this.user3 = new User("bumjin", "박범진", "springno3");
+
+		dao.deleteAll();
+		assertEquals(dao.getCount(), 0);
+
+		dao.add(user1);
+		assertEquals(dao.getCount(), 1);
+
+		dao.add(user2);
+		assertEquals(dao.getCount(), 2);
+
+		dao.add(user3);
+		assertEquals(dao.getCount(), 3);
+	}
+
+	@Test
+	public void getUserFailure() throws SQLException, ClassNotFoundException {
+		dao.deleteAll();
+		assertEquals(dao.getCount(), 0);
+		assertThrows(EmptyResultDataAccessException.class, () -> {
+			dao.get("unknown_id");
+		});
+	}
+}
+```
+
+## 스프링 테스트 적용
+- 아직 찜찜한 곳은 애플리케이션 컨텍스트 생성 방식이다.
+  - @Before 메소드가 테스트 메소드 개수만큼 반복되므로, 애플리케이션 컨텍스트도 3번 만들어진다.
+- 현재는 이상 없으나, 테스트가 많아질 수록 시간이 걸릴 것이다.
+  - **애플리케이션 컨텍스트가 만들어질 때는 모든 싱글톤 빈 오브젝트가 초기화된다**
+    - 어떤 빈은 오브젝트가 생성될 때 자체적인 초기화 작업을 진행해서 많은 시간을 필요로 할 때가 있기 때문
+### 테스트를 위한 애플리케이션 컨텍스트 관리
+#### 스프링 테스트 컨텍스트 프레임워크 적용
+```java
+@RunWith(SpringJUnit4ClassRunner)
+@ContextConfiguration(locations="/applicationContext.xml")
+public class UserDaoTest {
+	@Autowired
+	private ApplicationContext context;
+
+	private UserDao dao;
+	private User user1;
+	private User user2;
+	private User user3;
+
+	@BeforeEach
+	public void setUp(){
+		this.dao = this.context.getBean("userDao", UserDao.class);
+	}
+  ...
+```
+***JUnit5 소스 변경***
+
+```java
+@ExtendWith(SpringExtension.class)
+@ContextConfiguration(locations="/applicationContext.xml")
+public class UserDaoTest {
+	@Autowired
+	private ApplicationContext context;
+
+	private UserDao dao;
+	private User user1;
+	private User user2;
+	private User user3;
+
+	@BeforeEach
+	public void setUp(){
+		this.dao = this.context.getBean("userDao", UserDao.class);
+	}
+  ...
+```
+- **@RunWith** 는 JUnit 프레임워크의 테스트 실행 방법을 확장할 때 사용
+- **@ContextConfiguration** 은 자동으로 만들어줄 애플리케이션 컨텍스트의 설정파일 위치를 지정
+
+#### 테스트 메소드의 컨텍스트 공유
+- 어러 개의 테스트 클래스가 있는데, 모두 같은 설정파일을 가진 애플리케이션 컨텍스트를 사용한다면, 스프링은 테스트 클래스 사이에도 애플리케이션 컨텍스트를 공유하게 해준다.
+
+#### @Autowired
+- **@Autowired** 는 ***스프링의 DI에 사용되는 특별한 애노테이션***
+- @Autowired가 붙은 인스턴스 변수가 있으면, 테스트 컨텍스트 프레임워크는 변수 타입과 일치하는 컨텍스트 내의 빈을 찾는다.
+- 타입이 일치하는 빈이 있으면 인스턴스 변수에 주입해준다.
+- 일반적으로는 주입을 위해서는 생성자나 수정자 메소드 같은 메소드가 필요하지만, 이 경우에는 메소드가 없어도 주입이 가능하다.
+- 별도의 DI 설정 없이 필드의 타입정보를 이용해 빈을 자동으로 가져올 수 있는데, 이런 방법을 타입에 의한 **자동와이어링** 이라고 한다.
+- @Autowired를 이용해 애플리케이션 컨텍스트가 갖고 있는 빈을 DI 받을 수 있다면 굳이 컨텍스트를 가져와 getBean()을 사용하는 것이 아니라, 아예 UserDao 빈을 직접 DI 받을 수 있다.
+```java
+public class UserDaoTest {
+  ...
+  @Autowired
+  private UserDao dao;
+  ...
+```
+- @Autowired는 같은 타입의 빈이 두 개 이상 있는 경우에는 타입만으로는 어떤 빈을 가져올지 결정할 수 없다.
+
+### DI와 테스트
+- 절대 사용하지 않는다는 DI 주입방식이더라도 인터페이스를 사용해야 하는 이유
+  - 소프트웨어 개발에서 절대란 없다.
+  - 클래스의 구현 방식은 바뀌지 않는다고 하더라도, 인터페이스를 두고 DI를 적용해 두면, 다른 차원의 서비스 기능을 도입할 수 있다.
+    - DB 커넥션 카운트 등
+  - 테스트
+    - 효율적인 테스트를 손쉽게 만들기 위해서라도 DI를 적용해야 한다.
+    - DI는 테스트가 작은 단위의 대상에 대해 독립적으로 만들어지고 실행되게 하는 중요한 역할
+  
+  #### 테스트 코드에 의한 DI
+  - 테스트 코드 내에서 수정자 메소드를 이용해서 직접 DI해도 된다.
+    - UserDao가 사용할 DataSource 오브젝트를 테스트 코드에서 변경할 수 있다는 뜻
+  - DB 커넥션이 운영버전이라면, 테스트 할 때는 사용해서는 안된다.
+    - applicationContext.xml 설정을 바꾸어 설정할 수 있지만, 위험하니 테스트 중에 DAO가 사용할 DataSource 오브젝트를 바꿔주는 게 좋다.
+  
+```java
+@ExtendWith(SpringExtension.class)
+@ContextConfiguration(locations="/applicationContext.xml")
+@DirtiesContext
+public class UserDaoTest {
+  @Autowired
+  private UserDao dao;
+  private User user1;
+  private User user2;
+  private User user3;
+
+  @BeforeEach
+  public void setUp(){
+    DataSource dataSource = new SingleConnectionDataSource("jdbc:mysql://localhost/testdb", "spring", "book", true);
+    this.dao.setDataSource(dataSource);
+  }
+```
+- 위 방법은 의존관계가 변경될 수 있어, **@DirtiesContext** 애노테이션으로, 테스트 컨텍스트 프레임워크에게 해당 클래스의 테스트에서 애플리케이션 컨텍스트의 상태를 변경한다는 것을 알려준다.
+- 테스트 컨텍스트는 위 애노테이션이 붙은 테스트 클래스에는 애플리케이션 컨텍스트 공유를 허용하지 않는다.
+- 다만 매번 애플리케이션 컨텍스트를 매번 만드는 것은 좋지 못하다.
+
+#### 테스트를 위한 별도의 DI 설정
+- 매번 수동으로 DI하는 건 단점이 많다.
+- 두 가지 종류의 설정파일을 만들어서 서버에서 운영용/테스트용으로 사용할 DataSource를 빈으로 각각 등록해두는 것
+- test-applicationContext.xml을 만들어 설정을 변경
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd">
+    <bean id="dataSource" class="org.springframework.jdbc.datasource.SimpleDriverDataSource">
+        <property name="driverClass" value="com.mysql.cj.jdbc.Driver"/>
+        <property name="url" value="jdbc:mysql://localhost/testDB"/>
+        <property name="username" value="spring"/>
+        <property name="password" value="book"/>
+    </bean>
+
+    <bean id="userDao" class="com.example.demo.user.dao.UserDao">
+        <property name="dataSource" ref="dataSource"/>
+    </bean>
+</beans>
+```
+```java
+@ExtendWith(SpringExtension.class)
+@ContextConfiguration(locations="/test-applicationContext.xml")
+@DirtiesContext
+public class UserDaoTest {
+...
+```
+
+#### 컨테이너 없는 DI 테스트
+- 아예 스프링 컨테이너를 사용하지 않는 방법
+- UserDao나 DataSource 구현 클래스 어디에도 스프링 API를 직접 사용하거나, 애플리케이션 컨텍스트를 이용하는 코드가 없다.
+  - 스프링 DI 컨테이너에 의존하지 않는다.
+
+```java
+public class UserDaoTest {
+  private UserDao dao;
+  private User user1;
+  private User user2;
+  private User user3;
+
+  @BeforeEach
+  public void setUp(){
+    dao = new UserDao();
+    DataSource dataSource = new SingleConnectionDataSource("jdbc:mysql://localhost/testdb", "spring", "book", true);
+    this.dao.setDataSource(dataSource);
+  }
+  ...
+```
+
+- 매번 새로운 UserDao 오브젝트가 만들어지는 단점은 있으나, UserDao는 가벼운 오브젝트라 부담이 없다.
+
+#### DI를 이용한 테스트 방법 선택
+- 항상 스프링 컨테이너 없이 테스트 할 수 있는 방법을 먼저 생각한다.
+- 오브젝트와 복잡한 의존관계를 갖고 있는 오브젝트를 테스트해야할 경우, 스프링의 설정을 이용한 DI 방식의 테스트를 이용하면 편리하다.
+- 예외적인 케이스에서 의존관계를 강제로 설정해준다.
+
+## 학습 테스트로 배우는 스프링
+- 테스트는 본인의 코드 뿐 아니라, 자신이 만들지 않은 프레임워크나 제공한 라이브러리에 대해서도 진행해야 한다. (**학습테스트(learning test)**)
+
+### 학습 테스트의 장점
+- 다양한 조건에 따른 기능을 손쉽게 확인해볼 수 있다.
+- 학습 테스트코드를 개발 중에 참고할 수 있다
+- 프레임워크나 제품을 업그레이드할 때 호환성 검증을 도와준다.
+- 테스트 작성에 대한 좋은 훈련이 된다.
+- 새로운 기술을 공부하는 과정이 즐거워진다.
+
+### 버그 테스트
+- **버그 테스트** 란 ***코드에 오류가 있을 때 그 오류를 가장 잘 드러내줄 수 있는 테스트***
+  - 테스트의 완성도를 높여준다.
+  - 버그의 내용을 명확하게 분석하게 해준다.
+  - 기술적인 문제를 해결하는 데 도움이 된다
+
+## 정리
+- 테스트는 자동화돼야 하고, 빠르게 실행할 수 있어야 한다.
+- main 테스트 대신 JUnit 프레임워크를 이용한 테스트 작성이 편리하다
+- 테스트 결과는 일관성 있어야 한다. 코드의 변경 없이 환경이나 테스트 실행 순서에 따라서 결과가 달라지면 안된다.
+- 테스트는 포괄적으로 작성해야 한다. 충분한 검증을 하지 않은 테스트는 없는 것보다 나쁠 수 있다.
+- 코드 작성과 테스트 수행의 간격이 짧을수록 효과적이다.
+- 테스트하기 쉬운 코드가 좋은 코드다
+- 테스트를 먼저 만들고 테스트를 성공시키는 코드를 만들어가는 테스트 주도 개발 방법도 유용하다
+- 테스트 코드도 애플리케이션 코드와 마찬가지로 적절한 리팩토링이 필요하다.
+- @Before, @After를 사용해서 테스트 메소드들의 공통 준비 작업과 정리 작업을 처리할 수 있다.
+- 스프링 테스트 컨텍스트 프레임워크를 이용하면 테스트 성능을 향상시킬 수 있다
+- 동일한 설정파일을 사용하는 테스트는 하나의 애플리케이션 컨텍스트를 공유한다
+- @Autowired를 사용하면 컨텍스트의 빈을 테스트 오브젝트에 DI할 수 있다.
+- 기술의 사용 방법을 익히고 이해를 돕기 위해 학습 테스트를 작성하자
+- 오류가 발견될 경우 그에 대한 버그 테스트를 만들어두면 유용하다.
+
