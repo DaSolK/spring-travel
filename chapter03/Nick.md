@@ -241,7 +241,7 @@ public void deleteAll() throws SQLException {
 - 아직 해당 전략을 고정한다는 점이 OCP에도 어긋난다.
 
 #### DI 적용을 위한 클라이언트/컨텍스트 분리
-- 앞서 활용해본 구조를 적용
+- 1,2장에서 활용해본 구조를 적용
 ```java
 public void jdbcContextWithStatementStratgy(StatementStrategy stmt) throws SQLException {
   Connection c = null;
@@ -396,3 +396,632 @@ public void deleteAll() throws SQLException {
 - jdbcContextWithStatementStrategy() 는 다른 DAO에서도 사용 가능
 
 #### 클래스 분리
+- JdbcContext라는 이름으로 분리
+- UserDao에 있던 컨텍스트 메소드를 workWithStatementStrategy()라는 이름으로 옮김
+- DataSource가 필요한 것은 UserDao가 아니라, JdbcContext가 되버리므로, DataSource 타입 빈을 DI 받도록 만듦
+
+```java
+public class JdbcContext {
+	private DataSource dataSource;
+
+	public void setDataSource(DataSource dataSource) {
+		this.dataSource = dataSource;
+	}
+
+	public void workWithStatementStrategy(StatementStrategy stmt) throws SQLException {
+		Connection c = null;
+		PreparedStatement ps = null;
+		try {
+			c = dataSource.getConnection();
+			ps = stmt.makePreparedStatement(c);
+			ps.executeUpdate();
+		} catch (SQLException e) {
+			throw e;
+		} finally {
+			if (ps != null) { try { ps.close(); } catch (SQLException e) {}}
+			if (c != null) { try { c.close(); } catch (SQLException e) {}}
+		}
+	}
+}
+```
+
+```java
+public class UserDao {
+	private JdbcContext jdbcContext;
+
+	public void setJdbcContext(JdbcContext jdbcContext) {
+		this.jdbcContext = jdbcContext;
+	}
+
+	public void add(final User user) throws ClassNotFoundException, SQLException {
+		this.jdbcContext.workWithStatementStrategy(new StatementStrategy() {
+			@Override
+			public PreparedStatement makePreparedStatement(Connection c) throws SQLException {
+				PreparedStatement ps = c.prepareStatement("insert into users(id, name, password) values(?,?,?)");
+				ps.setString(1, user.getId());
+				ps.setString(2, user.getName());
+				ps.setString(3, user.getPassword());
+
+				return ps;
+			}
+		});
+	}
+
+	public void deleteAll() throws SQLException {
+		this.jdbcContext.workWithStatementStrategy(
+				new StatementStrategy() {
+					@Override
+					public PreparedStatement makePreparedStatement(Connection c) throws SQLException {
+						return c.prepareStatement("delete from users");
+					}
+				}
+		);
+	}
+}
+
+```
+#### 빈 의존관계 변경
+- UserDao가 JdbcContext에 의존함
+- JdbcContext는 인터페이스인 DataSource와 달리, 구체 클래스
+- 일반적으로 인터페이스를 만들어야 하나, JdbcContext는 그 자체로 독립적인 JDBC 컨텍스트를 제공해주는 서비스 오브젝트로서의 의미이므로 구현 방법이 바뀔 가능성은 없다.
+- 스프링 빈 설정은 클래스 레벨이 아니라 런타임 시에 만들어지는 오브젝트 레벨의 의존관계에 따라 정의됨.
+- 의존관계를 따라, XML 재정의
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd">
+    <bean id="jdbcContext" class="com.example.demo.user.dao.JdbcContext">
+        <property name="dataSource" ref="dataSource"/>
+    </bean>
+
+    <bean id="userDao" class="com.example.demo.user.dao.UserDao">
+        <property name="dataSource" ref="dataSource"/>
+        <property name="jdbcContext" ref="jdbcContext"/>
+    </bean>
+
+    <bean id="dataSource" class="org.springframework.jdbc.datasource.SimpleDriverDataSource">
+        <property name="driverClass" value="com.mysql.cj.jdbc.Driver"/>
+        <property name="url" value="jdbc:mysql://localhost/tobi?serverTimezone=UTC"/>
+        <property name="username" value="root"/>
+        <property name="password" value="qlsfkeps`12"/>
+    </bean>
+</beans>
+```
+- 모든 dataSource를 userDao의 메소드에서 분리한게 아니니, 아직 남김.
+
+### JdbcContext의 특별한 DI
+#### 스프링 빈으로 DI
+- 인터페이스를 사용하지 않은 DI는 문제가 있을까?
+- DI의 기본 의도에 맞게 JdbcContext의 메소드를 인터페이스로 뽑아내 정의해두고, UserDao에서 사용하게 해도 되지만, 꼭 그럴 필요는 없음.
+- ***기본적으로 인터페이스를 사용해야하지만(온전한 DI라고 볼수 없지만) 스프링의 DI는 넓게 보자면 객체의 생성과 관계설정에 대한 제어권한을 오브젝트에서 제거하고 외부로 위임했다는 IoC라는 개념을 포괄한다.***
+- **JdbcContext를 UserDao와 DI 구조로 만들어야 할 이유**
+  - JdbcContext가 스프링 컨테이너의 싱글톤 레지스트리에서 관리되는 싱글톤 빈이기 때문
+    - JdbcContext는 그 자체로 변경되는 상태정보를 갖고 있지 않음
+    - 내부에서 사용할 dataSource라는 인스턴스 변수지만 읽기 전용이다.
+    - JDBC 컨텍스트 메소드를 제공해주는 일종의 서비스 오브젝트로서 의미가 있으며, 싱글톤으로 구현되어 공유하는 것이 이상적
+  - **JdbcContext가 DI를 통해 다른 빈에 의존하고 있기 때문**
+    - JdbcContext는 dataSource 프로퍼티를 통해 DataSource 오브젝트를 주입받음
+    - DI를 위해서는 양쪽 모두 스프링 빈으로 등록되어야 함.
+- **인터페이스를 사용하지 않은 이유**
+  - UserDao와 JdbcContext가 매우 긴밀하다(***응집도가 높다***)
+    - ORM을 사용할 경우는 이와 다르게 구현되어야 한다.
+  - 이런 사항은 가장 마지막 단계에서 고려되어야 한다.
+
+#### 코드를 이용하는 수동 DI
+- 다른 방법으로는 **UserDao 내부에서 직접 DI를 적용하는 것**
+- 단, 이 경우, 싱글톤으로 만들려는 것은 포기해야 한다.
+  - DAO 메소드가 호출될 때마다 JdbcContext 오브젝트를 매번 만드는 것은 아니며, DAO마다 하나의 JdbcContext를 갖게 하는것.
+  - JdbcContext의 제어권은 UserDao가 갖게 하며, 사용할 오브젝트를 만들고 초기화하는 전통적인 방법을 사용
+- JdbcContext가 다른 빈을 인터페이스를 통해 의존하는 내용은 DataSource 타입 빈을 다이내믹하게 주입 받아서 사용하는 것.
+  - 그러나, 스프링의 빈이 아니니, DI 컨테이너를 통해 주입받을 수 없다.
+  - 이런 경우, **UserDao에게 DI까지 맡기는 방법을 적용**
+- 스프링의 설정파일에 userDao와 dataSource 두 개만 빈으로 정의
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd">
+
+    <bean id="userDao" class="com.example.demo.user.dao.UserDao">
+        <property name="dataSource" ref="dataSource"/>
+    </bean>
+
+    <bean id="dataSource" class="org.springframework.jdbc.datasource.SimpleDriverDataSource">
+        <property name="driverClass" value="com.mysql.cj.jdbc.Driver"/>
+        <property name="url" value="jdbc:mysql://localhost/tobi?serverTimezone=UTC"/>
+        <property name="username" value="root"/>
+        <property name="password" value="qlsfkeps`12"/>
+    </bean>
+</beans>
+```
+```java
+public class UserDao {
+  private DataSource dataSource;
+  private JdbcContext jdbcContext;
+
+  public void setDataSource(DataSource dataSource) {
+    // jdbcCOntext 생성(IoC)
+    this.jdbcContext = new JdbcContext();
+    // 의존 오브젝트 주입(DI)
+    this.jdbcContext.setDataSource(dataSource);
+    this.dataSource = dataSource;
+  }
+  ...
+```
+- **인터페이스 없이 DAO와 밀접한 관계를 갖는 클래스를 DI에 적용하는 방법 2가지**
+- 빈으로 등록하는 방법
+  - 장점은 인터페이스를 두지 않아도 될 만큼 긴밀한 관계를 갖는 DAO 클래스와 JdbcCOntext를 어색하게 따로 빈으로 구분하지 않고 내부에서 직접 만들어 사용하면서도 다른 오브젝트에 대한 DI를 적용할 수 있다는 점.
+  - 단점은 DI의 근본적인 원칙에 부합하지 않는 구체적인 클래스와의 관계가 설정에 직접 노출된다는 단점이 있다.
+- 코드를 이용해 수동으로 DI하는 방법
+  - JdbcContext가 UserDao의 내부에서 만들어지고 사용되면서 그 관계를 외부에는 드러내지 않는 장점
+  - JdbcCOntext를 여러 오브젝트가 사용하더라도, 싱글톤으로 만들 수 없고, DI 작업을 위한 부가적인 코드가 필요
+
+## 템플릿과 콜백
+- 익명 내부 클래스를 활용한 방식
+- **템플릿/콜백 패턴** 전략 패턴의 컨텍스트를 **템플릿**이라고 부르고, 익명 내부 클래스로 만들어지는 오브젝트를 **콜백** 이라고 부른다.
+
+### 템플릿/콜백의 동작원리
+- **템플릿**은 고정된 작업 흐름을 가진 코드를 재사용한다는 의미
+- **콜백**은 템플릿 안에서 호출되는 것이 목적인 오브젝트
+
+#### 템플릿/콜백의 특징
+- 템플릿/콜팩 패턴의 콜백은 보통 단일 메소드 인터페이스를 사용
+  - 템플릿의 작업 흐름 중 특정 기능을 위해 한 번 호출되는 경우가 일반적이기 때문
+- 메소드 레벨에서 이루어지는 DI방식의 전략 패턴 구조
+- 일반적인 DI는 인스턴스 변수를 Setter로 받아서 사용하지만, 메번 메소드 단위로 사용할 오브젝트를 새롭게 전달 받는 것
+
+#### JdbcContext에 적용된 템플릿/콜백
+- 리턴 값이 없는 단순한 구조
+- 조회 작업에서는 보통 템플릿의 작업 결과를 클라이언트에 리턴해준다.
+- 템플릿의 작업 흐름이 좀 더 복잡한 경우에는 한 번 이상 콜백을 호출하기도 하고 여러 개의 콜백을 클라이언트로부터 받아서 사용하기도 한다.
+
+### 편리한 콜백의 재활용
+- DAO 메소드는 간결해지고 최소한의 데이터 액세스 로직만 갖고 있게 만들어짐
+- 단, DAO 메소드에서 매번 익명 내부 클래스를 사용하기 때문에 상대적으로 코드를 작성하고 읽기가 조금 불편함
+
+#### 콜백의 분리와 재활용
+- makePreparedStatement의 쿼리부분만 파라미터로 받으면 형태는 같다.
+
+```java
+public void deleteAll() throws SQLException {
+  executeSql("delete from users");
+}
+
+private void executeSql(final String query) throws SQLException {
+  this.jdbcContext.workWithStatementStrategy(
+      new StatementStrategy() {
+        @Override
+        public PreparedStatement makePreparedStatement(Connection c) throws SQLException {
+          return c.prepareStatement(query);
+        }
+      }
+  );
+}
+```
+#### 콜백과 템플릿의 결합
+- DAO가 공유할 수 있는 템플릿 클래스 안으로 옮겨도 된다.
+
+``` java
+public class JdbcContext {
+	private DataSource dataSource;
+
+	public void setDataSource(DataSource dataSource) {
+		this.dataSource = dataSource;
+	}
+
+	public void workWithStatementStrategy(StatementStrategy stmt) throws SQLException {
+		Connection c = null;
+		PreparedStatement ps = null;
+		try {
+			c = dataSource.getConnection();
+			ps = stmt.makePreparedStatement(c);
+			ps.executeUpdate();
+		} catch (SQLException e) {
+			throw e;
+		} finally {
+			if (ps != null) { try { ps.close(); } catch (SQLException e) {}}
+			if (c != null) { try { c.close(); } catch (SQLException e) {}}
+		}
+	}
+
+	public void executeSql(final String query) throws SQLException {
+		workWithStatementStrategy(
+				new StatementStrategy() {
+					@Override
+					public PreparedStatement makePreparedStatement(Connection c) throws SQLException {
+						return c.prepareStatement(query);
+					}
+				}
+		);
+	}
+}
+```
+``` java
+public void deleteAll() throws SQLException {
+  this.jdbcContext.executeSql("delete from users");
+}
+```
+- 일반적으로는 성격이 다른 코드는 분리하지만, 이 경우는 응집력이 강한 코드들이기 때문에 한 군데 모여 있는 게 유리
+
+### 템플릿/콜백의 응용
+#### 테스트와 try/catch/finally
+- 기존
+```java
+public class CalcSumTest {
+  @Test
+  public void sumOfNumbers() throws IOException {
+    String path = getClass().getResource("").getPath() + "numbers.txt";
+
+    Calculator calculator = new Calculator();
+    int sum = calculator.calcSum(path);
+
+    assertThat(sum, is(10));
+  }
+}
+```
+- 클래스 분리
+```java
+public class Calculator {
+  public int calcSum(String path) throws IOException {
+    BufferedReader br = null;
+    Integer sum = 0;
+    String line = null;
+
+    br = new BufferedReader(new FileReader(path));
+
+    while ((line = br.readLine()) != null) {
+        sum += Integer.valueOf(line);
+    }
+
+    br.close
+    return sum;
+  }
+}
+```
+- try/catch/finally 추가
+
+```java
+public class Calculator {
+  public int calcSum(String path) throws IOException {
+    BufferedReader br = null;
+    Integer sum = 0;
+    String line = null;
+
+    try {
+      br = new BufferedReader(new FileReader(path));
+      while ((line = br.readLine()) != null) {
+          sum += Integer.valueOf(line);
+      }
+    } catch (IOException e) {
+      e.printStackTrace();
+      throw e;
+    } finally {
+      if (br != null) {
+        try {
+          br.close();
+        } catch (IOException e) {
+          e.printStackTrace();
+        }
+      }
+    }
+    return sum;
+  }
+}
+```
+#### 중복의 제거와 템플릿/콜백 설계
+- 새롭게 추가되는 내용을 적용하기 위해 템플릿/콜백으로 재사용성을 높임.
+
+```java
+public interface BufferedReaderCallback {
+  Integer doSomethingWithReader(BufferedReader br) throws IOException;
+}
+```
+```java
+public class Calculator {
+  public int calcSum(String filepath) throws IOException {
+    BufferedReaderCallback sumCallback = new BufferedReaderCallback() {
+      @Override
+      public Integer doSomethingWithReader(BufferedReader br) throws IOException {
+        Integer sum = 0;
+        String line = null;
+
+        while ((line = br.readLine()) != null) {
+            sum += Integer.valueOf(line);
+        }
+
+        return sum;
+      }
+    };
+    return fileReadTemplate(filepath, sumCallback);
+}
+
+  public Integer calcMultiple(String filepath) throws IOException {
+    BufferedReaderCallback sumCallback = new BufferedReaderCallback() {
+      @Override
+      public Integer doSomethingWithReader(BufferedReader br) throws IOException {
+        Integer multifly = 1;
+        String line = null;
+
+        while ((line = br.readLine()) != null) {
+            multifly *= Integer.valueOf(line);
+        }
+
+        return multifly;
+      }
+    };
+    return fileReadTemplate(filepath, sumCallback);
+  }
+
+  public Integer fileReadTemplate(String path, BufferedReaderCallback callback) throws IOException {
+    BufferedReader br = null;
+
+    try {
+      br = new BufferedReader(new FileReader(path));
+      int ret = callback.doSomethingWithReader(br);
+      return ret;
+    } catch (IOException e) {
+      e.printStackTrace();
+      throw e;
+    } finally {
+      if (br != null) {
+        try {
+          br.close();
+        } catch (IOException e) {
+          e.printStackTrace();
+        }
+      }
+    }
+  }
+}
+```
+```java
+public class CalcSumTest {
+  Calculator calculator;
+  String numFilePath;
+
+  @Before
+  public void setUp() {
+    this.calculator = new Calculator();
+    this.numFilePath = getClass().getResource("").getPath() + "numbers.txt";
+  }
+
+  @Test
+  public void sumOfNumbers() throws IOException { 
+    assertThat(calculator.calcSum(this.numFilePath), is(10));
+  }
+
+  @Test
+  public void multipleOfNumbers() throws IOException {    
+    assertThat(calculator.calcMultiple(this.numFilePath), is(24));
+  }
+}
+```
+
+#### 템플릿/콜백의 재설계
+- calcSum과 calcMultiply의 공통 부분(공통 패턴)이 있으며, 라인별 작업을 콜백 인터페이스로 정의
+
+```java
+public interface LineCallback {
+  Integer doSomethingWithLine(String line, Integer value);
+}
+```
+```java
+public class Calculator {
+  public Integer lineReadTemplate(String path, LineCallback callback, int initVal) throws IOException {
+    BufferedReader br = null;
+
+    try {
+      br = new BufferedReader(new FileReader(path));
+      Integer res = initVal;
+      String line = null;
+      while ((line = br.readLine()) != null) {
+          res = callback.doSomethingWithLine(line, res);
+      }
+      return res;
+    } catch (IOException e) {
+      e.printStackTrace();
+      throw e;
+    } finally {
+      if (br != null) {
+        try {
+          br.close();
+        } catch (IOException e) {
+          e.printStackTrace();
+        }
+      }
+    }
+  }
+}
+```
+```java
+public class Calculator {
+  public int calcSum(String filepath) throws IOException {
+    LineCallback sumCallback = new LineCallback() {
+      @Override
+      public Integer doSomethingWithLine(String line, Integer value) {
+        return value + Integer.valueOf(line);
+      }
+    };
+    return lineReadTemplate(filepath, sumCallback, 0);
+  }
+
+  public Integer calcMultiple(String filepath) throws IOException {
+    LineCallback multipleCallback = new LineCallback() {
+      @Override
+      public Integer doSomethingWithLine(String line, Integer value) {
+        return value * Integer.valueOf(line);
+      }
+    };
+    return lineReadTemplate(filepath, multipleCallback, 1);
+  }
+
+  public Integer lineReadTemplate(String path, LineCallback callback, int initVal) throws IOException {
+    BufferedReader br = null;
+
+    try {
+      br = new BufferedReader(new FileReader(path));
+      Integer res = initVal;
+      String line = null;
+      while ((line = br.readLine()) != null) {
+        res = callback.doSomethingWithLine(line, res);
+      }
+      return res;
+    } catch (IOException e) {
+      e.printStackTrace();
+      throw e;
+    } finally {
+      if (br != null) {
+        try {
+          br.close();
+        } catch (IOException e) {
+          e.printStackTrace();
+        }
+      }
+    }
+  }
+}
+```
+
+#### 제네릭스를 이용한 콜백 인터페이스
+- 자바 언어에 타입 파라미터라는 개념을 도입한 **Generics(제네릭스)** 를 이용
+- 결과 타입을 다양하게 가져갈 수 있음
+- LineCallback의 리턴 값과 파라미터 타입을 제네릭 타입 파라미터 T로 선언
+
+```java
+public interface LineCallback<T> {
+  T doSomethingWithLine(String line, T value);
+}
+```
+```java
+public <T> T lineReadTemplate(String filepath, LineCallback<T> callback, T initVal) throws IOException {
+  BufferedReader br = null;
+  try {
+    br = new BufferedReader(new FileReader(filepath));
+    T res = initVal;
+    String line = null;
+    while((line = br.readLine()) != null) {
+      res = callback.doSomethingWithLine(line, res);
+    }
+    return res;
+  }
+  catch(IOException e) {...}
+  finally {...}
+}
+```
+```java
+public String concatenate(String filepath) throws IOException {
+  LineCallback<String> concatCallback = new LineCallback<String>() {
+    @Override
+    public String doSomethingWithLine(String line, String value) {
+      return value + line;
+    }
+  };
+
+  return lineReadTemplate(filepath, concatCallback, "");
+}
+```
+
+```java
+@Test
+public void concatenateNumbers() throws IOException {   
+  assertThat(calculator.concatenate(this.numFilePath), is("1234"));
+}
+```
+
+## 스프링의 JdbcTemplate
+- 스프링에서 제공하는 템플릿/콜백 기술 알아보기
+- JDBC 코드용 기본 템플릿 = JdbcTemplate
+```java
+public class UserDao {
+  private DataSource dataSource;
+  private JdbcTemplate jdbcTemplate;
+
+  public void setDataSource(DataSource dataSource) {
+    this.jdbcTemplate = new JdbcTemplate();
+    this.dataSource = dataSource;
+  }
+  ...
+```
+### update()
+- deleteAll에 적용
+
+```java
+public void deleteAll() throws SQLException {
+  this.jdbcTemplate.update(new PreparedStatementCreator() {
+    @Override
+    public PreparedStatement createPreparedStatement(Connection con) throws SQLException {
+      return con.prepareStatement("delete from users");
+    }
+  });
+}
+```
+- executeSql과 비슷하게 적용
+
+```java
+public void deleteAll() throws SQLException {
+  this.jdbcTemplate.update("delete from users");
+}
+```
+- add 함수 변환
+  
+```java
+public void add(final User user) throws ClassNotFoundException, SQLException {
+  this.jdbcTemplate.update("insert into users(id, name, password) values (?,?,?)", user.getId(), user.getName(), user.getPassword());
+}
+```
+
+### queryForInt()
+
+```java
+public int getCount() throws SQLException {
+  return this.jdbcTemplate.query(new PreparedStatementCreator() {
+    @Override
+    public PreparedStatement createPreparedStatement(Connection con) throws SQLException {
+      return con.prepareStatement("select count(*) from users");
+    }
+  }, new ResultSetExtractor<Integer>() {
+    @Override
+    public Integer extractData(ResultSet rs) throws SQLException, DataAccessException {
+      rs.next();
+      return rs.getInt(1);
+    }
+  });
+}
+```
+- 콜백을 만들기 위해 두번이나 익명 내부 클래스가 등장하지만, 두 파라미터를 통해 결과 값을 가져올 수 있다.
+- **ResultSetExtractor** 는 제네릭스 타입 파라미터를 갖는다.
+- 위 내용을 1줄로 줄여서 사용이 가능했으나, **최근에 삭제**
+
+```java
+public int getCount() throws SQLException {
+  return this.jdbcTemplate.queryForInt("select count(*) from users");
+}
+```
+
+### queryForObject()
+- get 메소드는 결과에서 User 오브젝트를 만들어 프로퍼티에 넣어주어야 한다.
+- ResultSetExtractor 콜백 대신 **RowMapper** 콜백을 사용
+- RowMapper는 ResultSet의 로우 하나를 매핑하기 위해 사용되기 때문에 여러번 호출될 수 있다.
+
+```java
+public User get(String id) {
+  return this.jdbcTemplate.queryForObject("select * from users where id = ?",
+      new Object[]{id}, new RowMapper<User>() {
+    public User mapRow(ResultSet rs, int rowNum) throws SQLException {
+      User user = new User();
+      user.setId(rs.getString("id"));
+      user.setName(rs.getString("name"));
+      user.setPassword(rs.getString("password"));
+      return user;
+    }
+  });
+}
+```
+- queryForObject는 SQL 실행시, 한개의 로우만 얻을 것으로 고려한다.
+- ResultSet의 next를 실행해 첫번째 로우로 이동, RowMapper 콜백을 호출
+- 조회 결과가 없으면 EmptyResultDataAccessException을 던진다.
+
+### query()
