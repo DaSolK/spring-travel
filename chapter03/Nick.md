@@ -185,7 +185,7 @@ public class UserDaoDeleteAll extends UserDao {
 - 확장구조가 이미 클래스르 설계하는 시점에서 고정되어 버림
 
 #### 전략 패턴의 적용
-- **개발 폐쇄 법칙(OCP)**을 잘 지키는 구조이면서도 템플릿 메소드 패턴보다 유연하고 확장성이 뛰어난 것이, 오브젝트를 아예 둘로 분리하고 클래스 레벨에서는 인터페이스를 통해서만 의존하도록 만드는 전략 패턴
+- **개방 폐쇄 법칙(OCP)** 을 잘 지키는 구조이면서도 템플릿 메소드 패턴보다 유연하고 확장성이 뛰어난 것이, 오브젝트를 아예 둘로 분리하고 클래스 레벨에서는 인터페이스를 통해서만 의존하도록 만드는 전략 패턴
 - OCP 관점에 보면 **확장에 해당하는 변하는 부분을 별도의 클래스로 만들어 추상화된 인터페이스를 통해 위임하는 방식** 이다.
 ![image](https://user-images.githubusercontent.com/19977258/87046528-492d1280-c234-11ea-8265-93e3902a0e62.png)
 
@@ -1025,3 +1025,170 @@ public User get(String id) {
 - 조회 결과가 없으면 EmptyResultDataAccessException을 던진다.
 
 ### query()
+#### 기능 정의와 테스트 작성
+- 모든 Row를 가져오는 getAll()을 만들어 List에 넣을 예정이니, Test 코드부터 짜자
+
+```java
+@Test
+public void getAll() throws SQLException, ClassNotFoundException {
+  dao.deleteAll();
+
+  dao.add(user1);
+  List<User> users1 = dao.getAll();
+  assertEquals(users1.size(), 1);
+  checkSameUser(user1, users1.get(0));
+
+  dao.add(user2);
+  List<User> users2 = dao.getAll();
+  assertEquals(users1.size(), 2);
+  checkSameUser(user1, users2.get(0));
+  checkSameUser(user2, users2.get(1));
+
+  dao.add(user3);
+  List<User> users3 = dao.getAll();
+  assertEquals(users3.size(), 3);
+  checkSameUser(user3, users3.get(0));
+  checkSameUser(user1, users3.get(1));
+  checkSameUser(user2, users3.get(2));
+}
+
+private void checkSameUser(User user1, User user2){
+  assertEquals(user1.getId(), user2.getId());
+  assertEquals(user1.getName(), user2.getName());
+  assertEquals(user1.getPassword(), user2.getPassword());
+}
+```
+
+#### query() 템플릿을 이용하는 getAll() 구현
+
+```java
+public List<User> getAll() {
+  return this.jdbcTemplate.query("select * from users order by id",
+      new RowMapper<User>() {
+        public User mapRow(ResultSet rs, int rowNum) throws SQLException {
+          User user = new User();
+          user.setId(rs.getString("id"));
+          user.setName(rs.getString("name"));
+          user.setPassword(rs.getString("password"));
+          return user;
+        }
+      });
+}
+```
+- Row 별로 콜백을 처리하고, List에 담긴다.
+
+#### 테스트 보완
+- 언제나 부정적인 테스트 먼저 작성하도록 하자.
+
+```java
+List<User> users0 = dao.getAll();
+assertEquals(users0.size(), 0);
+```
+### 재사용 가능한 콜백의 분리
+#### DI를 위한 코드 정리
+- UserDao의 DataSource 인스턴스 변수 제거
+
+```java
+private JdbcTemplate jdbcTemplate;
+
+public void setDataSource(DataSource dataSource) {
+  this.jdbcTemplate = new JdbcTemplate();
+}
+```
+
+#### 중복 제거
+- get()과 getAll()의 RowMapper의 내용이 똑같다
+- RowMapper 콜백에는 상태정보가 없으니, 하나의 콜백 오브젝트를 멀티 스레드에서 사용이 가능
+
+```java
+private RowMapper<User> userMapper = new RowMapper<User>() {
+  @Override
+  public User mapRow(ResultSet rs, int rowNum) throws SQLException {
+    User user = new User();
+    user.setId(rs.getString("id"));
+    user.setName(rs.getString("name"));
+    user.setPassword(rs.getString("password"));
+    return user;
+  }
+};
+```
+
+```java
+public User get(String id) {
+  return this.jdbcTemplate.queryForObject("select * from users where id = ?",
+      new Object[]{id}, this.userMapper);
+}
+
+public List<User> getAll() {
+  return this.jdbcTemplate.query("select * from users order by id",this.userMapper);
+}
+```
+#### 템플릿/콜백 패턴과 UserDao
+- 최종 UserDao
+
+```java
+public class UserDao {
+  private RowMapper<User> userMapper = new RowMapper<User>() {
+    @Override
+    public User mapRow(ResultSet rs, int rowNum) throws SQLException {
+      User user = new User();
+      user.setId(rs.getString("id"));
+      user.setName(rs.getString("name"));
+      user.setPassword(rs.getString("password"));
+      return user;
+    }
+  };
+
+  private JdbcTemplate jdbcTemplate;
+
+  public void setDataSource(DataSource dataSource) {
+    this.jdbcTemplate = new JdbcTemplate();
+  }
+
+  public void add(final User user) throws ClassNotFoundException, SQLException {
+    this.jdbcTemplate.update("insert into users(id, name, password) values (?,?,?)", user.getId(), user.getName(), user.getPassword());
+  }
+
+  public User get(String id) {
+    return this.jdbcTemplate.queryForObject("select * from users where id = ?",
+        new Object[]{id}, this.userMapper);
+  }
+
+  public void deleteAll() throws SQLException {
+    this.jdbcTemplate.update("delete from users");
+  }
+
+  public int getCount() throws SQLException {
+    return this.jdbcTemplate.queryForObject("select count(*) from users", Integer.class);
+  }
+
+  public List<User> getAll() {
+    return this.jdbcTemplate.query("select * from users order by id",this.userMapper);
+  }
+}
+```
+- User 정보를 DB에 넣거나, 가져오거나, 조작하는 방법에 대한 핵심 로직만 담겨 있다.
+  - **응집도가 높다.**
+- JDBC API를 사용하는 방식, 예외처리, 리소스 반납, DB 연결은 전부 JdbcTemplate에 있다.
+  - **낮은 결합도를 가진다.**
+- JdbcTemplate라는 템플릿 클래스를 직접 이용한다는 면에서 특정 템플릿/콜백 구현에 대한 강한 결합을 갖고 있다.
+- 더 개선할 수 있는 방향은?
+  - ***userMapper가 인스턴스 변수로 설정되어 있고, 한 번 만들어지면 변경되지 않는 프로퍼티와 같은 성격을 띠고 있으니 아예 UserDao 빈의 DI용 프로퍼티로 만들어 버린다.***
+    - UserMapper를 독립된 빈으로 만들고, XML 설정에 User 테이블의 필드 이름과 User 오브젝트 프로퍼티의 매핑정보를 담을 수도 있다.
+    - UserMapper를 분리하면, User의 프로퍼티와 User 테이블의 필드 이름이 바뀌거나 매핑 방식이 바뀌는 경우에 UserDao 코드를 수정하지 않고도 매핑정보를 변경할 수 있다.
+  - ***DAO 메소드에서 사용하는 SQL 문장을 UserDao 코드가 아니라 외부 리소스에 담고 읽는 것***
+    - DB 테이블의 이름/필드 이름을 변경하거나, SQL 쿼리 최적화때도 UserDao 코드에 손 댈 필요 없다.
+
+## 정리
+- JDBC와 같은 예외가 발생할 가능성이 있으며 공유 리소스의 반환이 필요한 코드는 반드시 try/catch/finally 블록으로 관리해야 한다.
+- 일정한 작업 흐름이 반복되면서 그중 일부 기능만 바뀌는 코드가 존재한다면 전략 패턴을 적용한다. 바뀌지 않는 부분을 컨텍스트로, 바뀌는 부분은 전략으로 만들고 인터페이스를 통해 유연하게 전략을 변경할 수 있도록 구성한다.
+- 같은 애플리케이션 안에 여러 가지 종류의 전략을 다이내믹하게 구성하고 사용해야 한다면 컨텍스트를 이용하는 클라이언트 메소드에서 직접 전략을 정의하고 제공하게 만든다.
+- 클라이언트 메소드 안에 익명 내부 클래스를 사용하여 전략 오브젝트를 구현하면 코드도 간결해지고 메소드의 정보를 직접사용할 수 있어서 편리하다
+- 컨텍스트가 하나 이상의 클라이언트 오브젝트에서 사용된다면 클래스를 분리해서 공유하도록 만든다.
+- 컨텍스트는 별도의 빈으로 등록해서 DI 받거나 클라이언트 클래스에서 직접 생성해서 사용한다. 클래스 내부에서 컨텍스트를 사용할 때 컨텍스트가 의존하는 외부의 오브젝트가 있다면 코드를 이용해서 직접 DI 해줄 수 있다.
+- 단일 전략 메소드를 갖는 전략 패턴이면서 익명 내부 클래스를 사용해서 매번 전략을 새로 만들어 사용하고, 컨텍스트 호출과 동시에 전략 DI를 수행하는 방식을 템플릿/콜백 패턴이라고 한다.
+- 콜백의 코드에도 일정한 패턴이 반복된다면 콜백을 템플릿에 넣고 재활용하는 것이 편리하다.
+- 템플릿과 콜백의 타입이 다양하게 바뀔 수 있다면 제네릭스를 이용한다.
+- 스프링은 JDBC 코드 작성을 위해 JdbcTemplate을 기반으로 하는 다양한 템플릿과 콜백을 제공한다.
+- 템플릿은 한 번에 하나 이상의 콜백을 사용할 수도 있고, 하나의 콜백을 여러 번 호출 할 수도 있다.
+- 템플릿/콜백을 설계할 때는 템플릿과 콜백 사이에 주고받는 정보에 관심을 둬야 한다.
